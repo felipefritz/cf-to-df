@@ -12,51 +12,75 @@ class ContentfulService:
 
     def __init__(self, space_id, access_token, environment='master'):
         self.client = Client(space_id, access_token, environment=environment)
-        self.entries_by_content_type = []
-
-    def __get_entries_by_content_type(self):
+        self.content_types = self.client.content_types()
+        self.entries = self.client.entries()
+        self.entries_by_content_type = self.__get_entries_by_content_type()
+        
+    def __get_entries_by_content_type(self) -> list[dict]:
+        """ Contentful has content types with their associated entries. 
+            for instance of this, we need to fetch all entries for each content type.
+        row of results:
+        
+        content_type_name: entity,
+        display_field: entityValue,
+        entries: [Entry[entity], Entry[entity]] -> Entity is a contenful object type.
+        
+        return: list[dict]
+        """
+        
+        entries_by_content_type = []
+        
         for content_type in self.content_types.items:
+            
             try:
-                entries = self.client.entries(
-                    {'content_type': content_type.id})
-                self.entries_by_content_type.append({content_type.id: entries})
-                logger.info(f"Fetching entries for {content_type.id}")
+                entries = [entry for entry in self.entries if entry.content_type.id == content_type.id]
+                entries_by_content_type.append(
+                    {'display_field': content_type.display_field,
+                     'content_type_name': content_type.id,
+                     'entries': entries})
 
+                logger.info(f"Fetching entries for {content_type.id}")
             except Exception as e:
                 logger.error(f'error: {e}')
                 continue
+            
+        return entries_by_content_type
 
-    def __get_fields_data_from_entries_by_entry_type_name(self, entry_name):
-        self.entity_types = []
-        self.__get_entries_by_content_type()
-
+    def get_entity_types_with_values(self, entry_name='entityType'):
+        results = []
         entity_types_items = next(
             (entry[entry_name].items for entry in self.entries_by_content_type if entry_name in entry), None)
 
-        raw_data = [
-            row.raw for row in entity_types_items if hasattr(row, 'raw')]
-        fields_data = [row['fields'] for row in raw_data if 'fields' in row]
-        return fields_data
+        entities = {
+            entity.raw['sys']['id']: entity for entry in self.entries_by_content_type if 'entity' in entry for entity in entry['entity'].items}
 
-    def get_entries(self):
-        self.entries = self.client.entries()
+        for entity_type in entity_types_items:
+            for value in entity_type.raw['fields']['entityValue']:
+                result_dict = {
+                    'entity_type_id': entity_type.raw['sys']['id'],
+                    'entity_type_value_id': value['sys']['id'],
+                    'content_type': entry_name,
+                    'entity_type_name': entity_type.raw['fields']['entityType'],
+                }
 
-    def get_content_types(self):
-        self.content_types = self.client.content_types()
+                # find matching entity and add entityValue
+                matching_entity = entities.get(
+                    result_dict['entity_type_value_id'])
+                if matching_entity is not None:
+                    result_dict['entity_value'] = matching_entity.raw['fields']['entityValue']
 
-    def get_entity_types(self):
-        fields_data = self.__get_fields_data_from_entries_by_entry_type_name(
-            'entityType')
+                results.append(result_dict)
 
-        for field in fields_data:
-            for value in field['entityValue']:
-                self.entity_types.append({'entityType':  field['entityType'],
-                                          'entityValue_type':  value['sys']['type'],
-                                          'entityValue_linktype':  value['sys']['linkType'],
-                                          'entityValue_id':  value['sys']['id']
-                                          })
+        return results
 
 
 cf_service = ContentfulService(space_id, api_key)
-cf_service.get_content_types()
-cf_service.get_entity_types()
+cf_service.get_entity_types_with_values()
+
+
+example = {'flow': {'content_type': 'flow',
+                    'intent': 'flow.activacion.info',
+                    'question': 'Necesito activar un producto',
+                    'id': 'U9MvUcf1GNP0KUQ6MTSkS'},
+           'flowEntityTypes': {}
+           }
