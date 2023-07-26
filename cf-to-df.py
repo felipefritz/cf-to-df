@@ -1,13 +1,18 @@
-from services.migration_service import IntentMigrationService
-from services.dialogflow import DialogflowService
-from settings import *
+import os
+
+from services.contentful_service import ContentfulService
+from clients.contentful_client import ContentfulClient
+
+if __name__ == '__main__':
+    contentful_space_id = os.getenv('CONTENTFUL_SPACE_ID')
+    contentful_api_key = os.getenv('CONTENTFUL_DELIVERY_API_KEY')
+    contentful_client = ContentfulClient(contentful_space_id, contentful_api_key)
+    cf_service = ContentfulService(contentful_client)
+    
+    cf_service.get_all_entries()
+    content_type_names = cf_service.get_content_type_names()
+    data = cf_service.extract_values_from_all_entries(cf_service.all_entries, export_to_excel=True)
 
 
-
-df = DialogflowService(DIALOGFLOW_PROJECT_ID, DIALOGFLOW_CREDENTIALS_PATH)
-agent = df.get_agent_name()
-intent_migration_service = IntentMigrationService(CONTENTFUL_SPACE_ID,
-                                                  CONTENTFUL_ACCESS_TOKEN,
-                                                  DIALOGFLOW_PROJECT_ID, 
-                                                  DIALOGFLOW_CREDENTIALS_PATH)
-intent_migration_service.migrate_intents()
+    flow_df = data['flow']
+    entityType_df = data['entityType']

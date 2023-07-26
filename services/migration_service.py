@@ -11,19 +11,5 @@ class IntentMigrationService:
         self.dialogflow_service = DialogflowService(dialogflow_project_id, dialogflow_credentials_path)
 
     def migrate_intents(self):
-        entries = self.contentful_service.get_entries('intent')
-
-        for entry in entries:
-            intent = dialogflow.Intent(
-                display_name=entry.fields()['name'],
-                training_phrases=[
-                    dialogflow.Intent.TrainingPhrase(parts=[dialogflow.Intent.TrainingPhrase.Part(text=phrase)])
-                    for phrase in entry.fields()['training_phrases']
-                ],
-                messages=[
-                    dialogflow.Intent.Message(text=dialogflow.Intent.Message.Text(text=[message]))
-                    for message in entry.fields()['messages']
-                ]
-            )
-
-            self.dialogflow_service.create_intent(intent)
+        entries = self.contentful_service.get_all_entries()
+        # TODO: This should get all intents from the contentful entries
