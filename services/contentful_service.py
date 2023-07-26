@@ -1,17 +1,16 @@
-from contentful import Client
-from services.clients.logger import get_logger
-import pandas as pd
-
+from loggers.logger import get_logger
+from clients.contentful_client import AbstractContentfulClient
+from services.contentful_utils import build_pandas_dataframes_for_all_content_types_with_related_entry_values, \
+                                        export_dict_content_types_with_related_entry_dataframe_to_excel
 
 logger = get_logger()
 
 
 class ContentfulService:
 
-    def __init__(self, space_id, access_token, environment='master'):
-        logger.info(
-            f"Initializing ContentfulService with space_id: {space_id}, access")
-        self.client = Client(space_id, access_token, environment=environment)
+    def __init__(self, client: AbstractContentfulClient):
+        logger.info(f"Initializing ContentfulService...")
+        self.client = client
         self.content_types = None
         self.all_entries = None
 
@@ -29,7 +28,7 @@ class ContentfulService:
     def get_all_entries(self) -> dict:
         try:
             logger.info("Fetching all entries")
-            self.all_entries = self.client.entries({'limit': 1000})
+            self.all_entries = self.client.entries()
             self.all_entries_dict = {
                 entry.id: entry for entry in self.all_entries}
             logger.info(
@@ -60,10 +59,12 @@ class ContentfulService:
             return {}
 
         data_by_content_type = self._build_data_by_content_type(data)
-        dataframes = self._build_pandas_dataframes_for_all_content_types_with_related_entry_values(data_by_content_type)
-        
+        dataframes = build_pandas_dataframes_for_all_content_types_with_related_entry_values(
+            data_by_content_type)
+
         if export_to_excel:
-            self._export_dict_content_types_with_related_entry_dataframe_to_excel(dataframes)
+            export_dict_content_types_with_related_entry_dataframe_to_excel(
+                dataframes)
         logger.info(f"Extracted values from all entries successfully")
         return dataframes
 
@@ -95,8 +96,9 @@ class ContentfulService:
 
     def _build_data_by_content_type(self, data: list[dict]) -> dict:
         data_by_content_type = {}
+        
+        logger.info(f"Extracting values from entries for content type")
         for item in data:
-            logger.info(f"Extracting values from entry with id: {item}")
             item_dict = {
                 **item.raw['fields'],
                 'locale': item.raw['sys']['locale'],
@@ -110,6 +112,7 @@ class ContentfulService:
                 data_by_content_type[item.content_type.id].append(item_dict)
             else:
                 data_by_content_type[item.content_type.id] = [item_dict]
+                
         self._build_data_by_content_type_with_related_entry_values(data_by_content_type)
         return data_by_content_type
 
@@ -122,18 +125,3 @@ class ContentfulService:
                 logger.info(
                     f"Extracting related values from entry with id: {item['id']} and conten type {content_type_name}")
                 self._extract_sys_ids(item)
-
-    def _build_pandas_dataframes_for_all_content_types_with_related_entry_values(self, data: list[dict]) -> dict:
-        dataframes = {}
-        logger.info("creating dataframes with all content")
-        for key, dataset in data.items():
-                df = pd.DataFrame(dataset)
-                dataframes[key] = df
-        return dataframes 
-
-    def _export_dict_content_types_with_related_entry_dataframe_to_excel(self, dataframes: dict):
-        logger.info("Exporting dataframes to excel")
-        with pd.ExcelWriter('output.xlsx') as writer:
-            for data_type, data_list in dataframes.items():
-                data_list.to_excel(writer, sheet_name=data_type, index=False)
-        logger.info("Exported dataframes to excel successfully")

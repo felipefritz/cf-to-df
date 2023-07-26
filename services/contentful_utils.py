@@ -1,4 +1,8 @@
-from contentful_service import ContentfulService
+from loggers.logger import get_logger
+import pandas as pd
+
+
+logger = get_logger()
 
 def get_all_contentful_entries(contentful_client):
         all_entries = []
@@ -16,7 +20,7 @@ def get_all_contentful_entries(contentful_client):
         return all_entries
 
 
-def get_entity_types_with_values(contenful_service: ContentfulService):
+def get_entity_types_with_values(contenful_service):
         results = []
         entry_name = 'entityType'
         entity_types_items = next(
@@ -42,3 +46,24 @@ def get_entity_types_with_values(contenful_service: ContentfulService):
                 results.append(result_dict)
 
         return results
+    
+    
+def build_pandas_dataframes_for_all_content_types_with_related_entry_values(data: list[dict]) -> dict:
+        dataframes = {}
+        logger.info("creating dataframes with all content")
+        for key, dataset in data.items():
+                df = pd.DataFrame(dataset)
+                dataframes[key] = df
+        return dataframes 
+
+
+def export_dict_content_types_with_related_entry_dataframe_to_excel(dataframes: dict):
+        logger.info("Exporting dataframes to excel")
+        try:
+            with pd.ExcelWriter('output.xlsx') as writer:
+                for data_type, data_list in dataframes.items():
+                    data_list.to_excel(writer, sheet_name=data_type, index=False)
+            logger.info("Exported dataframes to excel successfully")
+            return True
+        except Exception as e:
+            logger.error(f'error trying to export dataframes to excel: {e}')
