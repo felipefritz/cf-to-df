@@ -2,4 +2,4 @@ venv
 .vscode
 __pycache_
 .env
-credentials.json
+df-credentials.json

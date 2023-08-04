@@ -13,7 +13,8 @@ class ContentfulService:
         self.client = client
         self.content_types = None
         self.all_entries = None
-
+        self.all_entries_dict = None
+        
     def get_content_type_names(self) -> list[str]:
         if not self.content_types:
             self._get_content_types()
@@ -40,7 +41,6 @@ class ContentfulService:
 
     def get_entry_by_id(self, id) -> dict:
         """ Get an entry by its id. Return None if not found. """
-        logger.info(f"Fetching entry with id: {id}")
         return self.all_entries_dict.get(id)
 
     def extract_values_from_all_entries(self, data: list[dict], export_to_excel=False) -> dict:
@@ -122,6 +122,4 @@ class ContentfulService:
             logger.info(
                 f"Extracting values from content type: {content_type_name}")
             for item in items:
-                logger.info(
-                    f"Extracting related values from entry with id: {item['id']} and conten type {content_type_name}")
                 self._extract_sys_ids(item)

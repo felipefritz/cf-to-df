@@ -1,9 +1,6 @@
 from contentful import Client, errors
 from abc import ABC, abstractmethod
-from loggers.logger import get_logger
-
-
-logger = get_logger()
+import os
 
 class AbstractContentfulClient(ABC):
 

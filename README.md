@@ -20,3 +20,7 @@
 1. project_id
 2. credentials file.json path
 
+
+# TESTS
+1. Execute : pytest tests
+
