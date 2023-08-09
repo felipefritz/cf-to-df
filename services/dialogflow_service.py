@@ -1,48 +1,65 @@
-from google.cloud import dialogflow_v2, dialogflowcx_v3beta1  as dialogflowcx
 from loggers.logger import get_logger
-from clients.dialogflow_client import AbstractDialogFlowClient, AgentManager, EntityTypeManager, PageManager, IntentManager, FlowManager
-import os
+from clients.dialogflow_client import AbstractDialogFlowClient, AgentManager, EntityTypeManager, PageManager, IntentManager, FlowManager, TransitionRouteManager
 
+
+logger = get_logger()
 
 
 class DialogflowServiceCX:
 
     def __init__(self, client: AbstractDialogFlowClient, agent_name: str):
-
+        logger.info("initializing DialogflowService")
         self.agent_manager = AgentManager(client, agent_name)
         self.flow_manager = FlowManager(client, self.agent_manager)
         self.intent_manager = IntentManager(client, self.agent_manager.agent_id)
         self.entity_type_manager = EntityTypeManager(client, self.agent_manager.agent_id)
-        #self.page_manager = PageManager(client, self.agent_manager.agent_id, flow_id) # flow_id necesitará ser proporcionado
+        self.transition_route_manager = TransitionRouteManager(client,
+                                                               self.flow_manager.client,
+                                                               self.flow_manager.parent)
+        self.pages_manager = PageManager(client, 
+                                         self.agent_manager.agent_id,
+                                         self.flow_manager.default_flow_id,
+                                         self.transition_route_manager)
 
-    def create_entity_type(self, display_name, entities_with_synonyms):
-        return self.entity_type_manager.create_entity_type(display_name, entities_with_synonyms)
-    
-    def create_intents(self, intents: list):
+    def create_entity_types(self, entity_types):
         
-        for intent in intents:
-            display_name = intent['intent']
-            default_training_phrase = intent['question'].strip()
-            response = intent['startNode']['text']
-            if default_training_phrase: 
-                response = intent['startNode']['text']
-                self.intent_manager.create_intent_if_not_exists(display_name=display_name,
-                                                  training_phrase=default_training_phrase, responses=response)
+        entity_types = [self.entity_type_manager.create_or_update_entity_type(display_name=entity_type.get('entityType'),
+                                                                    entities_with_synonyms=entity_type['entityValue'])
+                        for entity_type in entity_types]
+        return entity_types
     
-    def get_intents_all(self):
-        return self.intent_manager.get_intents_all()
+    def create_intents(self, flows: list):
+        intents =  self.intent_manager.get_intents_all()
+        
+        for flow in flows:
+            self._add_parent_to_intent(flow, intents)
+            display_name = flow['intent']
+            default_training_phrase = flow['question'].strip()
+            self.intent_manager.create_intent_if_not_exists(display_name=display_name,
+                                                  training_phrase=default_training_phrase)
 
-    def create_page(self, flow_id, display_name, form, transition_routes):
-        page = dialogflowcx.Page(
-            display_name=display_name,
-            form=form,
-            transition_routes=transition_routes
-        )
-        parent_flow = f"{self.parent}/flows/{flow_id}"
-        response = self.pages_client.create_page(parent=parent_flow, page=page)
-        print(f"Page created: {response}")
-        return response
+    def create_pages(self, intents_list):
+        responses = []
+        for intent in intents_list:
+            response = self.pages_manager.create_page(intent)
+        return
 
+    def create_pages_faq(self, intents_list):
+        pages_created = []
+        for intent in intents_list:
+            response = self.pages_manager.create_or_update_page_faq(intent, intent['startNode']['text'])
+            pages_created.append(response)
+        return pages_created
+    
+    def delete_pages(self):
+        return self.pages_manager.delete_all_pages()
+    
+    def _add_parent_to_intent(self, flow, intents):
+        for intent in intents:
+            if flow['intent'] == intent['display_name']:
+                flow['parent'] = intent['parent']
+                return flow
+    
 
 
 

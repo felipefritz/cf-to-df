@@ -1,6 +1,6 @@
 from loggers.logger import get_logger
 from clients.contentful_client import AbstractContentfulClient
-from services.contentful_utils import build_pandas_dataframes_for_all_content_types_with_related_entry_values, \
+from utils.contentful_utils import build_pandas_dataframes_for_all_content_types_with_related_entry_values, \
                                         export_dict_content_types_with_related_entry_dataframe_to_excel
 
 logger = get_logger()
@@ -11,38 +11,53 @@ class ContentfulService:
     def __init__(self, client: AbstractContentfulClient):
         logger.info(f"Initializing ContentfulService...")
         self.client = client
-        self.content_types = None
-        self.all_entries = None
-        self.all_entries_dict = None
+        self._content_types = None
+        self._all_entries = None
+        self._all_entries_dict = None
+        self._flows = None
+        self._entity_types = None
+        self._intents = None
+        self._pages = None
+        self._data_ready_to_use = None
         
-    def get_content_type_names(self) -> list[str]:
-        if not self.content_types:
-            self._get_content_types()
+    @property
+    def content_types(self):
+        if self._content_types is None:
+            self._content_types = self.client.content_types()
+        return self._content_types
 
-        logger.info(f"Fetching content type names")
-        content_type_names = [
-            content_type.id for content_type in self.content_types.items]
-        logger.info("Fetched the following content type names successfully:\n{}".format(
-            '\n'.join(content_type_names)))
-        return content_type_names
+    @property
+    def all_entries(self):
+        if self._all_entries is None:
+            self._all_entries = self._fetch_all_entries()
+        return self._all_entries
 
-    def get_all_entries(self) -> dict:
-        try:
-            logger.info("Fetching all entries")
-            self.all_entries = self.client.entries()
-            self.all_entries_dict = {
-                entry.id: entry for entry in self.all_entries}
-            logger.info(
-                f"Fetched {len(self.all_entries)} entries successfully")
-            return self.all_entries
-
-        except Exception as e:
-            logger.error(f'error trying to fetch all entries: {e}')
-
-    def get_entry_by_id(self, id) -> dict:
-        """ Get an entry by its id. Return None if not found. """
-        return self.all_entries_dict.get(id)
-
+    @property
+    def data_ready_to_use(self):
+        if self._data_ready_to_use is None:
+            self._data_ready_to_use = self.extract_values_from_all_entries(self.all_entries)
+        return self._data_ready_to_use
+    
+    @property
+    def flows(self):
+        if self._flows is None:
+            data = self.data_ready_to_use
+            if data and 'flow' in data:
+                self._flows = data['flow'].to_dict('records')
+            else:
+                self._flows = []
+        return self._flows
+    
+    @property
+    def entity_types(self):
+        if self._entity_types is None:
+            data = self.data_ready_to_use
+            if data and 'entityType' in data:
+                self._flows = data['entityType'].to_dict('records')
+            else:
+                self._flows = []
+        return self._flows
+    
     def extract_values_from_all_entries(self, data: list[dict], export_to_excel=False) -> dict:
         """This function extracts all values from all entries by content type and return them as a dict of dataframe.
         Also it is possible to export all entries by content type in excel format.
@@ -54,20 +69,40 @@ class ContentfulService:
         Returns:
             dict: dict with dataframes for each content type.
         """
-        if len(data) == 0 and not hasattr(data, 'items'):
-            logger.error("No entries found")
-            return {}
+        try:
+            if len(data) == 0 and not hasattr(data, 'items'):
+                logger.error("No entries found")
+                return {}
 
-        data_by_content_type = self._build_data_by_content_type(data)
-        dataframes = build_pandas_dataframes_for_all_content_types_with_related_entry_values(
-            data_by_content_type)
+            data_by_content_type = self._build_data_by_content_type(data)
+            dataframes = build_pandas_dataframes_for_all_content_types_with_related_entry_values(
+                data_by_content_type)
 
-        if export_to_excel:
-            export_dict_content_types_with_related_entry_dataframe_to_excel(
-                dataframes)
-        logger.info(f"Extracted values from all entries successfully")
+            if export_to_excel:
+                export_dict_content_types_with_related_entry_dataframe_to_excel(
+                    dataframes)
+            logger.info(f"Extracted values from all entries successfully")
+            
+        except Exception as e:
+                return 
+                logger.error(f"Failed to get data from contentful: {e}")
         return dataframes
 
+    def get_entry_by_id(self, id) -> dict:
+        """ Get an entry by its id. Return None if not found. """
+        return self._all_entries_dict.get(id)
+    
+    def _fetch_all_entries(self):
+        try:
+            logger.info("Fetching all entries")
+            all_entries = self.client.entries()
+            self._all_entries_dict = {entry.id: entry for entry in all_entries}
+            logger.info(f"Fetched {len(all_entries)} entries successfully")
+            return all_entries
+        except Exception as e:
+            logger.error(f'error trying to fetch all entries: {e}')
+            return []    
+    
     def _extract_sys_ids(self, element):
         for key, value in element.items():
             if isinstance(value, dict):
@@ -90,9 +125,6 @@ class ContentfulService:
                             # Replace the value with the entry fields
                             value[i] = {**entry.raw['fields']}
                             self._extract_sys_ids(value[i])
-
-    def _get_content_types(self) -> list[dict]:
-        self.content_types = self.client.content_types()
 
     def _build_data_by_content_type(self, data: list[dict]) -> dict:
         data_by_content_type = {}
