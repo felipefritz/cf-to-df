@@ -29,20 +29,21 @@ class DialogflowServiceCX:
         return entity_types
     
     def create_intents(self, flows: list):
-        intents =  self.intent_manager.get_intents_all()
         
         for flow in flows:
-            self._add_parent_to_intent(flow, intents)
+            self._add_parent_to_intent(flow)
             display_name = flow['intent']
             default_training_phrase = flow['question'].strip()
             self.intent_manager.create_intent_if_not_exists(display_name=display_name,
                                                   training_phrase=default_training_phrase)
 
-    def create_pages(self, intents_list):
-        responses = []
-        for intent in intents_list:
-            response = self.pages_manager.create_page(intent)
-        return
+    def create_flow_pages(self, flows: list):
+        pages =[]
+        for flow in flows:
+            self._add_parent_to_intent(flow)
+            page = self.pages_manager.create_page_from_flow(flow)
+            pages.append(page)
+        return pages
 
     def create_pages_faq(self, intents_list):
         pages_created = []
@@ -54,13 +55,14 @@ class DialogflowServiceCX:
     def delete_pages(self):
         return self.pages_manager.delete_all_pages()
     
-    def _add_parent_to_intent(self, flow, intents):
+    def _add_parent_to_intent(self, flow):
+        intents =  self.intent_manager.get_intents_all()
+
         for intent in intents:
             if flow['intent'] == intent['display_name']:
                 flow['parent'] = intent['parent']
                 return flow
     
-
 
 
 

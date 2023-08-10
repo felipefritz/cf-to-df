@@ -23,8 +23,12 @@ if __name__ == '__main__':
 
     # 3. process data
     flows_with_faq = [flow for flow in flows if flow['intent'].startswith('faq')]
-                    
+    flows_no_faq = [flow for flow in flows if not flow['intent'].startswith('faq')]
+    
+
     # 4. dialog flow create or update data
+    df_service.create_flow_pages(flows_no_faq)
+    
     df_service.create_intents(flows=flows)
     df_service.create_entity_types(entity_types)
     df_service.create_pages_faq(flows_with_faq)

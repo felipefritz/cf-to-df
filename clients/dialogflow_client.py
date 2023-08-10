@@ -277,42 +277,6 @@ class PageManager:
         updated_page = self.client.update_page(request=request)
         return updated_page
 
-    def create_page(self, intent):
-        
-                # Intent ID
-            intent_id = intent['parent']
-
-                # Aquí, puedes especificar el texto de la respuesta. Por ejemplo, puedes utilizar un diccionario
-                # para mapear los display_names a los mensajes de texto que desees, o modificar los datos según tus necesidades.
-            text_message = "Aquí tu respuesta de entrada para " + intent['display_name']
-
-                # Crea una respuesta de texto
-            text_response = ResponseMessage(
-                text={
-                        'text': [text_message]
-                    }
-                )
-
-                # Crea una página con la transición de ruta para el intent específico
-            page = Page(
-                    display_name=intent['display_name'],
-                    entry_fulfillment={
-                        'messages': [text_response]
-                    },
-                    transition_routes=[
-                        {
-                            'intent': intent_id,
-                            'trigger_fulfillment': {
-                                'messages': [text_response]  # Puedes personalizar el mensaje según corresponda
-                            }
-                        }
-                    ]
-                )
-                
-                # Crea la página dentro del flujo
-            response = self.client.create_page(parent=self.parent_flow, page=page)
-            return response
-
     def remove_references_to_page(self, target_page_name):
         # 1. Eliminar referencias de otras páginas
         pages = self.client.list_pages(parent=self.parent_flow)
@@ -356,7 +320,116 @@ class PageManager:
             self.remove_references_to_page(page.name)
             self.delete_page(page_name=page.name)
 
- 
+    def create_page_from_flow(self, flow):
+        page_name = flow["intent"]
+        start_node = flow["startNode"]
+        entry_text = start_node["text"]
+
+        # Crear la página principal
+        master_page = self.create_page(
+            display_name=flow['intent'],
+            intent_parent=flow['parent'],
+            response_text=entry_text, # Usar entry_text aquí
+            fallback_text=flow['startNode']['fallbacks'][0]['text'],
+            chips=[chip['text'] for chip in flow['startNode']['chips']]
+        )
+
+        for chip in start_node["chips"]:
+            if 'location' not in chip:
+                self.chips_to_payload_response([chip])
+            else:
+                subpage_display_name = flow['intent'] + chip['text']
+                subpage_response_text = chip['location']['text']
+                subpage_fallback = chip['location']['fallbacks'][0]['text']
+
+                # Obtener los chips para sub-subpáginas, si existen
+                sub_subpage_chips = [sub_chip['text'] for sub_chip in chip['location'].get('chips', [])]
+
+                self.create_page(
+                    display_name=subpage_display_name,
+                    intent_parent=flow['parent'],
+                    response_text=subpage_response_text,
+                    fallback_text=subpage_fallback,
+                    chips=sub_subpage_chips
+                )
+
+                # Crear sub-subpáginas si existen chips para ellas
+                if 'chips' in chip['location']:
+                    for sub_chip in chip['location']['chips']:
+                        if 'url' in sub_chip:
+                            # Crear una página con respuesta de tipo payload
+                            self.create_payload_page(flow, chip)
+                        else:
+                            self.create_page_from_flow(sub_chip)
+
+
+    def create_page(self, display_name, intent_parent, response_text, fallback_text, chips=None):
+        text_response = ResponseMessage(
+            text={
+                'text': [response_text]
+            }
+        )
+        payload = {
+            # Define más atributos del payload si es necesario.
+            'chips': chips if chips else []
+        }
+        payload_response = ResponseMessage(
+            payload=payload
+        )
+        page = Page(
+            display_name=display_name,
+            entry_fulfillment={
+                'messages': [text_response, payload_response]
+            },
+            transition_routes=[
+                {
+                    'intent': intent_parent,  # Utiliza el nombre de la página como intención.
+                    'trigger_fulfillment': {
+                        'messages': [ResponseMessage(
+                            text={'text': [fallback_text]}
+                        )]
+                    }
+                }
+            ]
+        )
+        try:
+            response = self.client.create_page(parent=self.parent_flow, page=page)
+            return response
+        except Exception as e:
+            logger.warning(f'page {display_name} already exists')
+            return False
+
+    
+    def chips_to_payload_response(self, chips):
+        return {"richContent": [{"options": chips, "type": "chips"}]}
+
+    def create_payload_page(self, flow, chip):
+        # Generar el nombre de la página usando el 'intent' del flow y el 'text' o 'entityValue' del chip
+        if "entityValue" in chip:
+            page_name = flow["intent"] + "." + chip["entityValue"]["entityValue"]
+        else:
+            page_name = flow["intent"] + "." + chip["text"]
+        
+        payload_response = ResponseMessage(
+            payload={
+                'url': chip['url']
+            }
+        )
+        page = Page(
+            display_name=page_name,
+            entry_fulfillment={
+                'messages': [payload_response]
+            }
+        )
+        try:
+            response = self.client.create_page(parent=self.parent_flow, page=page)
+            return response
+        except Exception as e:
+            logger.warning(f'page {page_name} already exists')
+            return False
+
+
+
 class IntentManager:
     
     def __init__(self, dialogflow_factory, agent_id):
@@ -404,43 +477,3 @@ class IntentManager:
         intents = self.client.list_intents(request={"parent": self.parent})
         intents_list = [{'display_name': intent.display_name, 'parent': intent.name} for intent in intents]
         return intents_list
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    
-"""class DialogFlowClientEssentials(AbstractDialogFlowClient):
-
-    def __init__(self, project_id, key_file):
-        self.agents_client = None
-        self.credentials = service_account.Credentials.from_service_account_file(key_file)
-        self.project_id = project_id
-        
-    def get_agents_client(self):
-        return dialogflow_v2.AgentsClient(credentials=self.credentials)
-
-    def get_contexts_client(self):
-        return dialogflow_v2.ContextsClient(credentials=self.credentials)
-
-    def get_entity_types_client(self):
-        return dialogflow_v2.EntityTypesClient(credentials=self.credentials)
-
-    def get_fulfillments_client(self):
-        return dialogflow_v2.FulfillmentsClient(credentials=self.credentials)  
-
-    def get_intents_client(self):
-        return dialogflow_v2.IntentsClient(credentials=self.credentials)
-
-    """
