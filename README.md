@@ -10,13 +10,24 @@
 
 
 # AUTH
-
+Add the uppercase variables as a environment variables to the project
 ### Contentful:
-    1. space_id
-    2. Content Delivery API - access token
+    1. CONTENTFUL_DELIVERY_API_KEY
+    2. CONTENTFUL_SPACE_ID - access token
     3. environment: default='master'
    
 ### DialogFlow:
-1. project_id
-2. credentials file.json path
+1. DIALOGFLOW_AGENT_NAME
+2. DIALOGFLOW_CREDENTIALS_PATH: credentials file.json path
+3. DIALOGFLOW_AGENT_ID
+4. DIALOGFLOW_PROJECT_ID
+5. DIALOGFLOW_LOCATION: project location such as us-central1
 
+### Run:
+Exeute: python cf-to-df.py
+
+### Logs:
+1. The logs will be added to logs file, 1 file for each type of log such as debug, info, warning, error
+
+# TESTS
+1. Execute : pytest tests

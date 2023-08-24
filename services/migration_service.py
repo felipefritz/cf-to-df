@@ -1,7 +1,7 @@
 # services/intent_migration_service.py
 
 from .contentful_service import ContentfulService
-from .dialogflow import DialogflowService
+from .dialogflow_service import DialogflowService
 from google.cloud import dialogflow
 
 
