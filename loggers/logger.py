@@ -1,35 +1,35 @@
 import logging
 import colorlog
+import os
 
-def get_logger():
+def get_logger(log_type="info"):
     # Obtener el nombre del módulo actual (sin el .py)
     module_name = __name__.split(".")[-1]
 
     # Configurar el registro de logs para el módulo actual
     logger = logging.getLogger(module_name)
-    logger.setLevel(logging.DEBUG)  # Puedes ajustar el nivel según tus necesidades
+    logger.setLevel(getattr(logging, log_type.upper()))
 
-    # Comprobar si el logger ya tiene un StreamHandler
-    if not any(isinstance(handler, logging.StreamHandler) for handler in logger.handlers):
-        # Definir un esquema de colores para los mensajes de log
-        log_colors = {
-            'DEBUG': 'cyan',
-            'INFO': 'white',
-            'WARNING': 'yellow',
-            'ERROR': 'red',
-            'CRITICAL': 'bold_red',
-        }
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(module)s - line (%(lineno)d) - %(levelname)s - %(message)s')
 
-        # Crear un formateador de colores
-        formatter = colorlog.ColoredFormatter(
-            '%(asctime)s - %(name)s - %(log_color)s%(levelname)s - %(message)s',
-            log_colors=log_colors
-        )
+    # Agregar un manejador de logs para guardar los mensajes en un archivo
+    log_directory = "logs"
+    if not os.path.exists(log_directory):
+        os.makedirs(log_directory)
 
-        # Agregar un manejador de logs para imprimir los mensajes en la consola
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.DEBUG)
-        console_handler.setFormatter(formatter)
-        logger.addHandler(console_handler)
+    log_file = f"{log_directory}/{log_type}.log"
+    
+    # Comprobar si el logger ya tiene un FileHandler para este tipo de log y, en caso afirmativo, eliminarlo
+    for handler in logger.handlers:
+        if isinstance(handler, logging.FileHandler) and handler.baseFilename == os.path.abspath(log_file):
+            logger.removeHandler(handler)
+
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(getattr(logging, log_type.upper()))
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
 
     return logger
+
+

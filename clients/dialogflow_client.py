@@ -1,82 +1,61 @@
+
+import time        
 from abc import ABC, abstractmethod
 
-from google.cloud.dialogflowcx_v3beta1.types.response_message import ResponseMessage
-from google.cloud.dialogflowcx_v3beta1.types.page import Page
-from google.protobuf import field_mask_pb2 as field_mask
-from google.cloud import  dialogflowcx_v3beta1 as dialogflowcx
 from google.oauth2 import service_account
 
+from google.cloud import  dialogflowcx_v3beta1 as dialogflowcx
+from google.protobuf import field_mask_pb2 as field_mask
+
 from loggers.logger import get_logger
-from utils.utils_dialogflow import clean_display_name
+from utils.utils_dialogflow import DialogFlowUtils
 
 
-logger = get_logger()
+info_logger = get_logger("info")
+error_logger = get_logger("error")
+debug_logger = get_logger("debug")
 
-
-def exception_handler_for_exists_objects(func):
-    def wrapper(*args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        except Exception as e:
-            # name = kwargs.get('name', 'Unknown')  # Suponiendo que 'name' es un argumento clave de la función decorada
-            if "already exists" in str(e):
-                logger.warning(f"object already exists. Continuing...")
-            else:
-                logger.error(f"An unexpected error occurred : {e}")
-                return False
-    return wrapper
-
-
-class AbstractDialogFlowClient(ABC):
-
-    @abstractmethod
-    def get_agents_client(self):
-        pass
     
-    @abstractmethod
-    def get_entity_types_client(self):
-        pass
-    
-    @abstractmethod
-    def get_fulfillments_client(self):
-        pass 
-    
-    @abstractmethod
-    def get_intents_client(self):
-        pass
-    
+class DialogFlowCXClientFactory:
 
-class DialogFlowCXClientFactory(AbstractDialogFlowClient):
-
-    def __init__(self, project_id, key_file, location='us-central1'):
+    def __init__(self, project_id, key_file, location):
         self.project_id = project_id
+        self.key_file = key_file
         self.location = location
-        self.credentials = service_account.Credentials.from_service_account_file(key_file)
+        self.credentials = service_account.Credentials.from_service_account_file(self.key_file)
         self.client_options = {"api_endpoint": f"{self.location}-dialogflow.googleapis.com"}
         self.base_parent = f'projects/{self.project_id}/locations/{self.location}'
-
-    def get_agents_client(self):
-        return dialogflowcx.AgentsClient(credentials=self.credentials, client_options=self.client_options)
-
-    def get_entity_types_client(self):
-        return dialogflowcx.EntityTypesClient(credentials=self.credentials, client_options=self.client_options)
     
-    def get_fulfillments_client(self):
-        return dialogflowcx.FulfillmentsClient(credentials=self.credentials, client_options=self.client_options)
-   
-    def get_flows_client(self):
+    @property
+    def _credentials(self):
+        if self._credentials is None:
+            try:
+                self._credentials = service_account.Credentials.from_service_account_file(self.key_file)
+            except Exception as e:
+                error_logger.error("error trying to authenticate dialog flow service: " +str(e))
+                return None
+        return self._credentials
+
+    def agents_client(self):
+        try:
+            agent_client = dialogflowcx.AgentsClient(credentials=self.credentials, client_options=self.client_options)
+        except Exception as e:
+            error_logger.error("error trying to get agents client")
+        return agent_client
+    
+    def flows_client(self):
        return dialogflowcx.FlowsClient(credentials=self.credentials, client_options=self.client_options)
 
-    def get_intents_client(self):
+    def entity_types_client(self):
+        return dialogflowcx.EntityTypesClient(credentials=self.credentials, client_options=self.client_options)
+    
+    def intents_client(self):
         return dialogflowcx.IntentsClient(credentials=self.credentials, client_options=self.client_options)
     
-    def get_pages_client(self):
+    def pages_client(self):
         return dialogflowcx.PagesClient(credentials=self.credentials, client_options=self.client_options)
-
-    def get_security_settings_client(self):
-        return dialogflowcx.SecuritySettingsClient(credentials=self.credentials, client_options=self.client_options)
     
-    def get_transition_route_client(self):
+    def transition_route_client(self):
         return dialogflowcx.TransitionRouteGroupsClient(
             credentials=self.credentials, client_options=self.client_options)
         
@@ -94,7 +73,7 @@ class AgentManager:
     
     def __init__(self, dialogflow_factory, agent_name):
         self.dialogflow_factory = dialogflow_factory
-        self.client = dialogflow_factory.get_agents_client()
+        self.client = dialogflow_factory.agents_client()
         self.agent_id = self._get_agentId_by_name(agent_name)
         self.parent = dialogflow_factory.get_agent_parent(self.agent_id)
 
@@ -108,7 +87,7 @@ class AgentManager:
                     agent_id = agent.name.split('/')[-1]
                     return agent_id
         except Exception as e:
-            logger.error(f'Error getting agent by name: {e}')
+            error_logger.error(f'Error getting agent by name: {e}')
             raise Exception(f'Error getting agent by name: {e}')
         return None
 
@@ -116,7 +95,7 @@ class AgentManager:
 class EntityTypeManager:
     
     def __init__(self, dialogflow_factory, agent_id):
-        self.client = dialogflow_factory.get_entity_types_client()
+        self.client = dialogflow_factory.entity_types_client()
         self.parent = dialogflow_factory.get_agent_parent(agent_id)
         
     def get_entity_type_by_display_name(self, display_name):
@@ -130,7 +109,7 @@ class EntityTypeManager:
 
     def create_or_update_entity_type(self, display_name, entities_with_synonyms):
         entities = []
-        display_name = clean_display_name(display_name.replace(' ', '-'))
+        display_name = DialogFlowUtils.clean_display_name(display_name.replace(' ', '-'))
         for entity in entities_with_synonyms:
             value = entity['entityValue']
             synonyms = entity.get('synonyms', [value])
@@ -138,10 +117,10 @@ class EntityTypeManager:
 
         existing_entity_type = self.get_entity_type_by_display_name(display_name)
         if existing_entity_type:
-            logger.info(f"Updating existing entity type: {display_name}")
+            info_logger.info(f"Updating existing entity type: {display_name}")
             entity_type = self.update_entity_type(existing_entity_type, entities)
         else:
-            logger.info(f"Creating entity type {display_name}")
+            info_logger.info(f"Creating entity type {display_name}")
             entity_type = dialogflowcx.EntityType(
                 display_name=display_name,
                 entities=entities,
@@ -166,10 +145,23 @@ class FlowManager:
     def __init__(self, dialogflow_factory, agent_manager):
         self.dialogflow_factory = dialogflow_factory
         self.agent_parent = agent_manager.parent
-        self.client = dialogflow_factory.get_flows_client()
+        self.client = dialogflow_factory.flows_client()
         self.default_flow_id = self.get_default_flow_id()
         self.parent = dialogflow_factory.get_flow_parent(agent_manager.agent_id, self.default_flow_id)
 
+    def get_flow_by_display_name(self, display_name):
+        try:
+            request = dialogflowcx.ListFlowsRequest(parent=self.agent_parent) 
+            flows = self.client.list_flows(request=request)
+
+            for flow in flows:
+                if flow.display_name == display_name:
+                    return flow
+        except Exception as e:
+            error_logger.error(f'Error getting flow: {e}')
+            raise Exception(f'Error getting flow by name: {e}')
+        return None
+    
     def get_default_flow_id(self):
         try:
             # Listar todos los flujos en el agente
@@ -182,290 +174,107 @@ class FlowManager:
                     flow_id = flow.name.split('/')[-1]
                     return flow_id
         except Exception as e:
-            logger.error(f'Error getting agent by name: {e}')
-            raise Exception(f'Error getting agent by name: {e}')
+            error_logger.error(f'Error getting flow: {e}')
+            raise Exception(f'Error getting flow: {e}')
         return None
 
-
-class TransitionRouteManager:
-    
-    def __init__(self, dialogflow_factory, flow_client, parent_flow):
-        self.client = dialogflow_factory.get_transition_route_client()
-        self.flow_client = flow_client
-        self.parent_flow = parent_flow
-        
-    def add_transition_route_to_flow(self, page, intent_name):
-        """add the new transition route to the flow that allows to page, this will connect the pages to the flow instead of pages
-        So all the pages created will be asociated to the flow.
-        
-        :page :  The dialog flow page instance
-        :intent: name that allows to the page
+    def create_flow(self, display_name, description=None):
         """
-        flow = self.flow_client.get_flow(name=self.parent_flow)
-        transition_route = dialogflowcx.TransitionRoute(
-            intent=intent_name,
-            target_page=page.name
-        )
-        
-        # Verificar si la transition_route ya existe en el flujo
-        if not any(route.intent == transition_route.intent for route in flow.transition_routes):
-            flow.transition_routes.append(transition_route)
-            # update the flow to the new transition
-            update_mask = field_mask.FieldMask(paths=["transition_routes"])
-            request = dialogflowcx.UpdateFlowRequest(
-                flow=flow,
-                update_mask=update_mask
-            )
-            updated_flow = self.flow_client.update_flow(request=request)
-            return updated_flow
-    
+        Crea un nuevo flujo en DialogFlow.
 
-class PageManager:
-    
-    def __init__(self, dialogflow_factory, agent_id, flow_id, transition_route_manager):
-        self.client = dialogflow_factory.get_pages_client()
-        self.parent_flow = f"{dialogflow_factory.get_agent_parent(agent_id)}/flows/{flow_id}"
-        self.flow_client = dialogflow_factory.get_flows_client()
-        self.transition_route_manager = transition_route_manager
+        Args:
+        - display_name (str): El nombre del flujo.
+        - description (str, opcional): Una descripción para el flujo.
 
-    def get_page_by_display_name(self, display_name):
-        request = dialogflowcx.ListPagesRequest(parent=self.parent_flow)
-        response = self.client.list_pages(request=request)
-        for page in response:
-            if page.display_name == display_name:
-                return page
-        return None
-        
-    def create_or_update_page_faq(self, intent, response_text):
-        # check transition route to verify the intent y and send the response
-        agent_response = dialogflowcx.ResponseMessage(text=dialogflowcx.ResponseMessage.Text(text=[response_text]))
-        transition_route = dialogflowcx.TransitionRoute(
-            intent=intent['parent'],
-            trigger_fulfillment=dialogflowcx.Fulfillment(
-                messages=[agent_response]  # agent response should be a list
-            )
-        )
-
-        existing_page = self.get_page_by_display_name(intent['key'])
-        if existing_page:
-            logger.info(f"page {intent['key']} already exists, updating... ")
-            if not any(route.intent == transition_route.intent for route in existing_page.transition_routes):
-                existing_page.transition_routes.append(transition_route)
-                page = self.update_page(existing_page, intent, transition_route)
-            else:
-                page = existing_page
-        else:
-            logger.info(f"Creating page {intent['key']}...")
-            page = dialogflowcx.Page(
-                display_name=intent['key'],
-                transition_routes=[transition_route] # : associate the transition route with the page instead flow
-            )
-            page = self.client.create_page(parent=self.parent_flow, page=page)
-            logger.info(f"Page {intent['key']} created... ")
-
-        self.transition_route_manager.add_transition_route_to_flow(page, intent_name=intent['parent'])
-        return page
-
-    def update_page(self, page, intent, transition_route):
-        logger.info(f"Page {intent['key']} already exists. Updating...")
-        page.transition_routes.append(transition_route)
-        update_mask = field_mask.FieldMask(paths=["transition_routes"])
-        request = dialogflowcx.UpdatePageRequest(
-                page=page,
-                update_mask=update_mask
-            )
-        updated_page = self.client.update_page(request=request)
-        return updated_page
-
-    def remove_references_to_page(self, target_page_name):
-        # 1. Eliminar referencias de otras páginas
-        pages = self.client.list_pages(parent=self.parent_flow)
-        for page in pages:
-            modified = False
-            for route in page.transition_routes:
-                if route.target_page == target_page_name:
-                    page.transition_routes.remove(route)
-                    modified = True
-            if modified:
-                self.client.update_page(page=page)
-
-        # 2. Eliminar referencias a nivel de flujo
-        flow = self.flow_client.get_flow(name=self.parent_flow)
-        modified = False
-        for route in flow.transition_routes:
-            if route.target_page == target_page_name:
-                flow.transition_routes.remove(route)
-                modified = True
-        if modified:
-            self.flow_client.update_flow(flow=flow)
-    
-    def delete_page(self, page_name, max_retries=3, delay=3):
-        import time
-        self.remove_references_to_page(page_name)
-        
-        for attempt in range(max_retries):
-            try:
-                self.client.delete_page(name=page_name)
-                logger.info(f"Deleted page: {page_name}")
-                return
-            except Exception as e:
-                logger.warning(f"Failed to delete page {page_name} on attempt {attempt + 1}. Reason: {e}")
-                if attempt < max_retries - 1:  # No esperar después del último intento
-                    time.sleep(delay)
-        print(f"Failed to delete page {page_name} after {max_retries} attempts.")
-    
-    def delete_all_pages(self):
-        pages = self.client.list_pages(parent=self.parent_flow)
-        for page in pages:
-            self.remove_references_to_page(page.name)
-            self.delete_page(page_name=page.name)
-
-    def create_page_from_flow(self, flow):
-        page_name = flow["intent"]
-        start_node = flow["startNode"]
-        entry_text = start_node["text"]
-
-        # Crear la página principal
-        master_page = self.create_page(
-            display_name=flow['intent'],
-            intent_parent=flow['parent'],
-            response_text=entry_text, # Usar entry_text aquí
-            fallback_text=flow['startNode']['fallbacks'][0]['text'],
-            chips=[chip['text'] for chip in flow['startNode']['chips']]
-        )
-
-        for chip in start_node["chips"]:
-            if 'location' not in chip:
-                self.chips_to_payload_response([chip])
-            else:
-                subpage_display_name = flow['intent'] + chip['text']
-                subpage_response_text = chip['location']['text']
-                subpage_fallback = chip['location']['fallbacks'][0]['text']
-
-                # Obtener los chips para sub-subpáginas, si existen
-                sub_subpage_chips = [sub_chip['text'] for sub_chip in chip['location'].get('chips', [])]
-
-                self.create_page(
-                    display_name=subpage_display_name,
-                    intent_parent=flow['parent'],
-                    response_text=subpage_response_text,
-                    fallback_text=subpage_fallback,
-                    chips=sub_subpage_chips
-                )
-
-                # Crear sub-subpáginas si existen chips para ellas
-                if 'chips' in chip['location']:
-                    for sub_chip in chip['location']['chips']:
-                        if 'url' in sub_chip:
-                            # Crear una página con respuesta de tipo payload
-                            self.create_payload_page(flow, chip)
-                        else:
-                            self.create_page_from_flow(sub_chip)
-
-
-    def create_page(self, display_name, intent_parent, response_text, fallback_text, chips=None):
-        text_response = ResponseMessage(
-            text={
-                'text': [response_text]
-            }
-        )
-        payload = {
-            # Define más atributos del payload si es necesario.
-            'chips': chips if chips else []
-        }
-        payload_response = ResponseMessage(
-            payload=payload
-        )
-        page = Page(
-            display_name=display_name,
-            entry_fulfillment={
-                'messages': [text_response, payload_response]
-            },
-            transition_routes=[
-                {
-                    'intent': intent_parent,  # Utiliza el nombre de la página como intención.
-                    'trigger_fulfillment': {
-                        'messages': [ResponseMessage(
-                            text={'text': [fallback_text]}
-                        )]
-                    }
-                }
-            ]
-        )
+        Returns:
+        - flow (dialogflowcx.Flow): El flujo creado.
+        """
         try:
-            response = self.client.create_page(parent=self.parent_flow, page=page)
-            return response
+            flow = dialogflowcx.Flow(
+                display_name=display_name,
+                description=description
+            )
+            request = dialogflowcx.CreateFlowRequest(
+                parent=self.agent_parent,
+                flow=flow
+            )
+            flow = self.client.create_flow(request=request)
+            return flow
         except Exception as e:
-            logger.warning(f'page {display_name} already exists')
-            return False
-
-    
-    def chips_to_payload_response(self, chips):
-        return {"richContent": [{"options": chips, "type": "chips"}]}
-
-    def create_payload_page(self, flow, chip):
-        # Generar el nombre de la página usando el 'intent' del flow y el 'text' o 'entityValue' del chip
-        if "entityValue" in chip:
-            page_name = flow["intent"] + "." + chip["entityValue"]["entityValue"]
-        else:
-            page_name = flow["intent"] + "." + chip["text"]
+            if "already exists" in str(e):
+                error_logger.warning(f"Flow '{display_name}' already exists. Continuing...")
+                flow = self.get_flow_by_display_name(display_name)
+                return flow
+            else:
+                error_logger.error(f"An unexpected error occurred while creating intent {display_name}: {e}")
+                return flow
         
-        payload_response = ResponseMessage(
-            payload={
-                'url': chip['url']
-            }
+    def update_flow(self, flow):
+        request = dialogflowcx.UpdateFlowRequest(
+            flow=flow,
+            update_mask=field_mask.FieldMask(paths=["start_flow_page"])
         )
-        page = Page(
-            display_name=page_name,
-            entry_fulfillment={
-                'messages': [payload_response]
-            }
-        )
-        try:
-            response = self.client.create_page(parent=self.parent_flow, page=page)
-            return response
-        except Exception as e:
-            logger.warning(f'page {page_name} already exists')
-            return False
-
+        return self.client.update_flow(request=request)
 
 
 class IntentManager:
     
     def __init__(self, dialogflow_factory, agent_id):
-        self.client = dialogflow_factory.get_intents_client()
+        self.client = dialogflow_factory.intents_client()
         self.parent = dialogflow_factory.get_agent_parent(agent_id)
 
     def create_intent_if_not_exists(self, display_name: str, training_phrase: str) -> dialogflowcx.Intent:
+        """Create an intent if it doesn't exist, or update if it does.
 
+        Args:
+            display_name (str): Name of the intent.
+            training_phrase (str): Training phrase to be added.
+
+        Returns:
+            dialogflowcx.Intent: Created or updated intent.
         """
-        Create an intent if it doesn't exist
-        :param display_name: name of the intent 
-        :param training_phrase:  Is the question in the flow from contentful 
-        :return: dialogflowcx.Intent
-        
-        """
+        existing_intent = self.get_intent_by_display_name(display_name)
+
+        if existing_intent:
+            info_logger.info(f"Intent already exists: {display_name}, updating...")
+            # Update the existing intent with new training phrase
+            return self.update_intent(existing_intent, training_phrase)
+
+        # If intent does not exist, then create it
         intent = dialogflowcx.Intent()
         part = dialogflowcx.Intent.TrainingPhrase.Part(text=training_phrase)
         training_phrase_obj = dialogflowcx.Intent.TrainingPhrase(parts=[part], repeat_count=1)
-
+        
         intent.display_name = display_name
         intent.training_phrases = [training_phrase_obj]
-        request = dialogflowcx.CreateIntentRequest(
-        parent=self.parent,
-        intent=intent,
-    )
+        request = dialogflowcx.CreateIntentRequest(parent=self.parent, intent=intent)
         try:
             response = self.client.create_intent(request=request)
-            logger.info(f"Intent created: {display_name}")
+            info_logger.info(f"Intent created: {display_name}")
             return response
         except Exception as e:
             if "already exists" in str(e):
-                logger.warning(f"Intent with display name '{display_name}' already exists. Continuing...")
+                info_logger.warning(f"Intent with display name '{display_name}' already exists. Continuing...")
             else:
-                logger.error(f"An unexpected error occurred while creating intent {display_name}: {e}")
+                error_logger.error(f"An unexpected error occurred while creating intent {display_name}: {e}")
                 return False
- 
+            
+    def get_intent_by_display_name(self, display_name):
+        """Get intent by its display name.
+        
+        Args:
+            display_name (str): Display name of the intent to fetch.
+
+        Returns:
+            Intent if found, else None.
+        """
+        request = dialogflowcx.ListIntentsRequest(parent=self.parent)
+        intents = self.client.list_intents(request)
+        for intent in intents:
+            if intent.display_name == display_name:
+                return intent
+        return None
+    
     def get_intents_all(self):
         """
         get all intents for the current agent
@@ -477,3 +286,196 @@ class IntentManager:
         intents = self.client.list_intents(request={"parent": self.parent})
         intents_list = [{'display_name': intent.display_name, 'parent': intent.name} for intent in intents]
         return intents_list
+    
+    def update_intent(self, intent, training_phrase):
+        """Update intent with new training phrase.
+        
+        Args:
+            intent (dialogflowcx.Intent): Existing intent to be updated.
+            training_phrase (str): Training phrase to be added.
+
+        Returns:
+            Updated intent.
+        """
+        part = dialogflowcx.Intent.TrainingPhrase.Part(text=training_phrase)
+        training_phrase_obj = dialogflowcx.Intent.TrainingPhrase(parts=[part], repeat_count=1)
+        # Ensure all training phrases have a valid repeat_count
+        for tp in intent.training_phrases:
+            if tp.repeat_count <= 0:
+                tp.repeat_count = 1
+        intent.training_phrases.append(training_phrase_obj)
+        request = dialogflowcx.UpdateIntentRequest(intent=intent)
+        
+        return self.client.update_intent(request=request)
+
+
+class PageManager:
+    """Manager for handling operations related to Dialogflow Pages."""
+
+    def __init__(self, dialogflow_factory, agent_id, flow_id):
+        """Initialize the PageManager.
+
+        Args:
+            dialogflow_factory: Factory to provide clients for various Dialogflow operations.
+            agent_id: ID of the agent.
+            flow_id: ID of the flow.
+            transition_route_manager: Manager to handle transition routes.
+        """
+        self.client = dialogflow_factory.pages_client()
+        self.parent_flow = f"{dialogflow_factory.get_agent_parent(agent_id)}/flows/{flow_id}"
+        self.flow_client = dialogflow_factory.flows_client()
+
+    def get_page_by_display_name(self, display_name, parent_flow=None):
+        """Retrieve a page using its display name.
+        Args:
+            display_name: Name of the page to retrieve.
+        Returns:
+            A Dialogflow page instance if found, else None.
+        """   
+        try:
+            request = dialogflowcx.ListPagesRequest(parent=parent_flow)
+            response = self.client.list_pages(request=request)
+        except Exception as e:
+            error_logger.error('error trying to get page by display name with error: ' + str(e))
+            raise Exception('Failed to get page by display name.')
+        for page in response:
+            if page.display_name == display_name:
+                return page
+        return None
+
+    def create_or_update_page(self, page, parent_flow):
+        """Create a new page or update an existing one in a flow.
+        Args:
+            page: Page instance to be created or updated.
+            intent: Intent related to the page. It is a parent string 'parent/...
+        Returns:
+            Created or updated Dialogflow page instance, or False if an error occurred.
+        """      
+        try:
+            existing_page = self.get_page_by_display_name(page.display_name, parent_flow=parent_flow)
+            if not existing_page:
+                # create new page
+                info_logger.info(f'creating page {page.display_name}')                    
+                page = self.client.create_page(page=page, parent=parent_flow)
+
+            else:
+                # update new page
+                error_logger.info(f"Page {page.display_name} already exists. Updating...")
+                page = self.update_page(page=existing_page, new_page=page)
+                
+            if isinstance(page, tuple):
+                page = page[0]
+            return page
+        except Exception as e:
+            error_logger.warning(f'page {page.display_name} could not be created by error:' + str(e))
+            return page
+
+    def update_page(self, page, new_page=None, transition_route=None):
+        if transition_route != None:
+            page.transition_routes.append(transition_route)
+        if new_page:
+            page.entry_fulfillment = new_page.entry_fulfillment
+        try:
+            update_mask = field_mask.FieldMask(paths=["transition_routes", 'entry_fulfillment'])
+            request = dialogflowcx.UpdatePageRequest(
+                    page=page,
+                    update_mask=update_mask
+                )
+            updated_page = self.client.update_page(request=request)
+            return updated_page
+        except Exception as e:
+            error_logger.error(f"Error updating  page {page}: {e} ")
+            # raise Exception("Error updating page")
+    
+    # -------------- functions for development only ---------------------------
+    def remove_references_to_page(self, target_page_name):
+        """Remove all references to a given page from other pages and the flow.
+        This is necessary by dialogflow if you want to recreate pages with new features
+        
+        Args:
+            target_page_name: Name of the page whose references need to be removed.
+        """
+        pages = self.client.list_pages(parent=self.parent_flow)
+        for page in pages:
+            modified = False
+            for route in page.transition_routes:
+                if route.target_page == target_page_name:
+                    page.transition_routes.remove(route)
+                    modified = True
+            if modified:
+                self.client.update_page(page=page)
+
+        # 2. remove references from flow
+        flow = self.flow_client.get_flow(name=self.parent_flow)
+        valid_transition_routes = []
+        for route in flow.transition_routes:
+            if route.trigger_fulfillment or route.target_page or route.target_flow :
+                valid_transition_routes.append(route)
+        flow.transition_routes = valid_transition_routes
+
+        if target_page_name != 'Default Start Flow':
+            self.flow_client.update_flow(flow=flow)
+            return
+       
+    def delete_page(self, page_name, max_retries=3, delay=3):
+        """Attempt to delete a page by its name, with retries.
+        
+        Args:
+            page_name: Name of the page to delete.
+            max_retries: Maximum number of deletion attempts.
+            delay: Time (in seconds) to wait between retries.
+        """
+        for attempt in range(max_retries):
+            try:
+                self.client.delete_page(name=page_name)
+                info_logger.info(f"Deleted page: {page_name}")
+                return
+            except Exception as e:
+                error_logger.warning(f"Failed to delete page {page_name} on attempt {attempt + 1}. Reason: {e}")
+                if attempt < max_retries - 1:  # No esperar después del último intento
+                    time.sleep(delay)
+    
+    def delete_all_pages(self):
+        """Delete all pages associated to the flow."""
+        pages = self.client.list_pages(parent=self.parent_flow)
+        for page in pages:
+            self.remove_references_to_page(page.name)
+            self.delete_page(page_name=page.name)
+
+   
+class TransitionRouteManager:
+    
+    def __init__(self, dialogflow_factory, flow_client, parent_flow, pages_manager):
+        self.client = dialogflow_factory.transition_route_client()
+        self.flow_client = flow_client
+        self.pages_manager = pages_manager
+        self.parent_flow = parent_flow
+    
+    def add_transition_route_to_new_flow(self, intent_name, target_flow_name):
+        flow = self.flow_client.get_flow(name=self.parent_flow)
+        transition_route = dialogflowcx.TransitionRoute(intent=intent_name, target_flow=target_flow_name)
+        return self._add_transition_route(flow, transition_route, target_flow_name)
+
+    def set_transition_from_default_start_page(self, intent_name, target_page_name, new_flow):
+        transition_route = dialogflowcx.TransitionRoute(intent=intent_name, target_page=target_page_name)
+        return self._add_transition_route(new_flow, transition_route, target_page_name)
+
+    def _add_transition_route(self, flow, transition_route, target_name):
+        if not any(route.intent == transition_route.intent for route in flow.transition_routes):
+            flow.transition_routes.append(transition_route)
+            update_mask = field_mask.FieldMask(paths=["transition_routes"])
+            request = dialogflowcx.UpdateFlowRequest(flow=flow, update_mask=update_mask)
+            try:
+                return self.flow_client.update_flow(request=request)
+            except Exception as e:
+                error_logger.error(f"Error trying to add transition route for {target_name}: {e}")
+                raise
+        return None
+
+
+
+
+
+
+
+
