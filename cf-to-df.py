@@ -36,9 +36,9 @@ if __name__ == '__main__':
     
     # 4. Create or update dialog flow data
     # 4.1 create entity types
-    df_service.create_entity_types(entity_types=entity_types)
+    # df_service.create_entity_types(entity_types=entity_types)
     # 4.2 Create intents
-    df_service.create_intents(intents=intents)
+    #df_service.create_intents(intents=intents)
     # 4.3 Create flows
     df_service.create_flows(flows_list=flows)
     # 4.4 Create faq. pages 

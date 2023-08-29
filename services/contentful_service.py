@@ -75,8 +75,7 @@ class ContentfulService:
                 sub_pages = self._map_subpages_from_flow(flow['startNode'], 
                                                          chip_text=flow['key'],
                                                          entity_types_dict=flow['flowEntityTypes'])
-                   
-
+                # start flow data with subpages
                 flows_with_subpages.append({'display_name': flow['key'], 
                                             'intent': flow['intent'],
                                             'locale': flow['locale'],
@@ -89,7 +88,8 @@ class ContentfulService:
                 
                 for subpage in sub_pages:
                     if subpage['parent'] is None:  
-                        flows_with_subpages[i]['payload_responses'] = ContentfulUtils.build_payload_response(flow['startNode']['chips'], type_of_option='chips')
+                        flows_with_subpages[i]['payload_responses'] = ContentfulUtils.build_payload_response(flow['startNode']['chips'],
+                                                                                                             type_of_option='chips')
                         
             except KeyError as e:
                 error_logger.error(f"Key error in flows_with_subpages: {e}")
@@ -97,7 +97,7 @@ class ContentfulService:
             except Exception as e:
                 error_logger.error(f"Unexpected error in flows_with_subpages: {e}")
                 raise ContentfulServiceError("Failed to process flow due to an unexpected error")
-
+        
         return flows_with_subpages
   
     @property
@@ -145,7 +145,8 @@ class ContentfulService:
     
     def _map_subpages_from_flow(self, data, result=None, chip_text=None, parent_name=None,
                                 depth=0, entity_types_dict=[], current_entity_value=None,
-                                current_entity_type=None,  page_group=None, parent_entity_type=None):
+                                current_entity_type=None,  page_group=None, parent_entity_type=None,
+                                parent_entity_values=None):
         # Initialize the results list if is the first time that the function is called
         if result is None:
             result = []
@@ -169,7 +170,8 @@ class ContentfulService:
                 'is_end_flow': False,
                 'entityType': '',
                 'entityValues': [],
-                'parent_entity_type': '',
+                'parent_entity_type':parent_entity_type,
+                'parent_entity_values': parent_entity_values,
                 'route_params_entity_types': '',
                 'page_group': page_group  # Agregamos el campo page_group
             }
@@ -199,7 +201,8 @@ class ContentfulService:
                     if 'buttons' in chip:
                         page_info['buttons'] = ContentfulUtils.build_payload_response(chip['location']['buttons'], 'button')
                     if not page_info["payload_responses"] and not self.page_already_added(result, page_info):
-                        result.append(page_info)
+                        if page_info not in  result:
+                            result.append(page_info)
                     # if chip has location, so has a subpage (location), then is added to the dict and call the function recursively
                     if 'location' in chip:
                         
@@ -210,7 +213,8 @@ class ContentfulService:
                                                      result, chip['text'],
                                                      combined_page_name,
                                                      depth+1,
-                                                     parent_entity_type= page_info['entityType'],
+                                                    parent_entity_type= page_info['entityType'],
+                                                     parent_entity_values= page_info['entityValues'],
                                                      current_entity_value=chip.get('entityValue'),
                                                      current_entity_type=current_entity_type)
                     # if chip has not "location" but  has "url" key, then is added to the payload dict"
@@ -224,7 +228,8 @@ class ContentfulService:
                 # IFf the page has "payload" responses, then, add payload responses to page info
                 if page_info["payload_responses"]:
                     page_info["payload_responses"] = ContentfulUtils.build_payload_response(page_info["payload_responses"], 'chips')
-                    result.append(page_info)
+                    if page_info not in  result:
+                        result.append(page_info)
 
             #if the element has not "url" and "chips",but has "text", then it should be a endflow"
             elif 'text' in data and 'url' not in data and 'chips' not in data:
@@ -233,10 +238,13 @@ class ContentfulService:
                     page_info["entityType"] = current_entity_type
                 if current_entity_value and not page_info["entityValues"]:  # added only if page_info["entityValues"] is empty
                     page_info["entityValues"].append(current_entity_value['entityValue'])
-                result.append(page_info)
+                if page_info not in  result:
+                            result.append(page_info)
                 if not self.page_already_added(result, page_info):
-                    result.append(page_info)
+                    if page_info not in  result:
+                            result.append(page_info)
         except Exception as e:
+            
             error_logger.error(str(e))
         return result
     

@@ -22,12 +22,12 @@ class DialogFlowCXClientFactory:
         self.project_id = project_id
         self.key_file = key_file
         self.location = location
-        self.credentials = service_account.Credentials.from_service_account_file(self.key_file)
+        self._credentials = None
         self.client_options = {"api_endpoint": f"{self.location}-dialogflow.googleapis.com"}
         self.base_parent = f'projects/{self.project_id}/locations/{self.location}'
     
     @property
-    def _credentials(self):
+    def credentials(self):
         if self._credentials is None:
             try:
                 self._credentials = service_account.Credentials.from_service_account_file(self.key_file)
@@ -95,42 +95,86 @@ class AgentManager:
 class EntityTypeManager:
     
     def __init__(self, dialogflow_factory, agent_id):
+        """ Manage the entity types methods associated with dialogflow.
+
+        Args:
+            dialogflow_factory (_type_): The dialogflow factory class with the entity
+            type dialog flow client: dialogflowcx.EntityTypesClient
+            agent_id (_type_):The agent id associated with the dialog flow client
+        """
         self.client = dialogflow_factory.entity_types_client()
         self.parent = dialogflow_factory.get_agent_parent(agent_id)
         
-    def get_entity_type_by_display_name(self, display_name):
+    def _add_synonyms_to_entity_types(self, entity_types: list[dict]):
+        """add synonyms from contentful to for each entity type dialog flow object
+        Args:
+            entity_types (_type_): List of dicts with entity types with keys entityValue and synonyms
+
+        Returns:
+            _type_: A list of entity types dialog flow objects
+        """
+        entities = []
+        for entity in entity_types:
+            value = entity['entityValue']
+            synonyms = entity.get('synonyms', [value])
+            entities.append(dialogflowcx.EntityType.Entity(value=value, synonyms=synonyms))
+        return entities
         
+    def get_entity_type_by_display_name(self, display_name: str):
+        """ Retrieves an entity type from Dialog Flow Client by display name.
+        Args:
+            display_name (_type_): Name of entity type as string.
+
+        Returns:
+            _type_: if exists , returns a dialog flow entity type object
+        """
         request = dialogflowcx.ListEntityTypesRequest(parent=self.parent)
         entity_types = self.client.list_entity_types(request=request)
         for entity_type in entity_types:
             if entity_type.display_name == display_name:
                 return entity_type
         return None
-
-    def create_or_update_entity_type(self, display_name, entities_with_synonyms):
-        entities = []
-        display_name = DialogFlowUtils.clean_display_name(display_name.replace(' ', '-'))
-        for entity in entities_with_synonyms:
-            value = entity['entityValue']
-            synonyms = entity.get('synonyms', [value])
-            entities.append(dialogflowcx.EntityType.Entity(value=value, synonyms=synonyms))
-
-        existing_entity_type = self.get_entity_type_by_display_name(display_name)
-        if existing_entity_type:
-            info_logger.info(f"Updating existing entity type: {display_name}")
-            entity_type = self.update_entity_type(existing_entity_type, entities)
-        else:
-            info_logger.info(f"Creating entity type {display_name}")
-            entity_type = dialogflowcx.EntityType(
-                display_name=display_name,
-                entities=entities,
-                kind=dialogflowcx.EntityType.Kind.KIND_MAP,
-                enable_fuzzy_extraction=True,
-            )
-            entity_type = self.client.create_entity_type(parent=self.parent, entity_type=entity_type)
-        return entity_type
+       
+    def create_or_update_entity_type(self, display_name: str, entity_types: list[dict]):
+        """ Create or update an new entity type in dialog flow by display name and synonyms.
+            An entity type has many entities.
+        Returns:
+            _type_: Dialog flow entity type object
+        """
+        display_name = DialogFlowUtils.clean_display_name(name=display_name.replace(' ', '-'))
+        entities = self._add_synonyms_to_entity_types(entity_types=entity_types)
+        existing_entity_type = self.get_entity_type_by_display_name(display_name=display_name)
+        
+        try:
+            if existing_entity_type:
+                info_logger.info(f"Updating existing entity type: {display_name}")
+                entity_type = self.update_entity_type(existing_entity_type, entities)
+            else:
+                info_logger.info(f"Creating entity type {display_name}")
+                entity_type = dialogflowcx.EntityType(
+                    display_name=display_name,
+                    entities=entities,
+                    kind=dialogflowcx.EntityType.Kind.KIND_MAP,
+                    enable_fuzzy_extraction=True,
+                )
+                entity_type = self.client.create_entity_type(parent=self.parent, entity_type=entity_type)
+            return entity_type
+        
+        except Exception as e:
+            if "already exists" in str(e):
+                info_logger.warning(f"Entity Type '{display_name}' already exists and nothing to update...")
+            else:
+                error_logger.error(f"An unexpected error occurred while creating intent {display_name}: {e}")
     
-    def update_entity_type(self, existing_entity_type, entities):
+    def update_entity_type(self, existing_entity_type, entities: list):
+        """ Update an entity type entities, FieldMask is a gpc method
+        that updates objects with the specified fields and objects
+        Args:
+            existing_entity_type (_type_): Dialog flow entity type object
+            entities (_type_): A list of entity dialog flow objects related to the entity type.
+        Returns:
+            _type_: Entity type object
+        """
         existing_entity_type.entities = entities
         update_mask = field_mask.FieldMask(paths=["entities"])
         request = dialogflowcx.UpdateEntityTypeRequest(
@@ -257,7 +301,6 @@ class IntentManager:
                 info_logger.warning(f"Intent with display name '{display_name}' already exists. Continuing...")
             else:
                 error_logger.error(f"An unexpected error occurred while creating intent {display_name}: {e}")
-                return False
             
     def get_intent_by_display_name(self, display_name):
         """Get intent by its display name.
@@ -385,64 +428,33 @@ class PageManager:
             return updated_page
         except Exception as e:
             error_logger.error(f"Error updating  page {page}: {e} ")
-            # raise Exception("Error updating page")
     
-    # -------------- functions for development only ---------------------------
-    def remove_references_to_page(self, target_page_name):
-        """Remove all references to a given page from other pages and the flow.
-        This is necessary by dialogflow if you want to recreate pages with new features
-        
-        Args:
-            target_page_name: Name of the page whose references need to be removed.
-        """
-        pages = self.client.list_pages(parent=self.parent_flow)
-        for page in pages:
-            modified = False
-            for route in page.transition_routes:
-                if route.target_page == target_page_name:
-                    page.transition_routes.remove(route)
-                    modified = True
-            if modified:
-                self.client.update_page(page=page)
+    def create_end_flow_page(self, parent_flow, message="Gracias por interactuar con nosotros. ¡Hasta pronto!"):
+        """Crea una página 'EndFlow' con un mensaje de despedida personalizado.
 
-        # 2. remove references from flow
-        flow = self.flow_client.get_flow(name=self.parent_flow)
-        valid_transition_routes = []
-        for route in flow.transition_routes:
-            if route.trigger_fulfillment or route.target_page or route.target_flow :
-                valid_transition_routes.append(route)
-        flow.transition_routes = valid_transition_routes
-
-        if target_page_name != 'Default Start Flow':
-            self.flow_client.update_flow(flow=flow)
-            return
-       
-    def delete_page(self, page_name, max_retries=3, delay=3):
-        """Attempt to delete a page by its name, with retries.
-        
         Args:
-            page_name: Name of the page to delete.
-            max_retries: Maximum number of deletion attempts.
-            delay: Time (in seconds) to wait between retries.
+            parent_flow (str): El flujo padre donde se creará la página.
+            message (str, optional): El mensaje de despedida. Por defecto es "Gracias por interactuar con nosotros. ¡Hasta pronto!".
+
+        Returns:
+            dialogflowcx.Page: La página 'EndFlow' creada o actualizada.
         """
-        for attempt in range(max_retries):
-            try:
-                self.client.delete_page(name=page_name)
-                info_logger.info(f"Deleted page: {page_name}")
-                return
-            except Exception as e:
-                error_logger.warning(f"Failed to delete page {page_name} on attempt {attempt + 1}. Reason: {e}")
-                if attempt < max_retries - 1:  # No esperar después del último intento
-                    time.sleep(delay)
+        # Verificar si la página 'EndFlow' ya existe
+        existing_page = self.get_page_by_display_name("EndFlow", parent_flow=parent_flow)
+        
+        # Crear o actualizar la página 'EndFlow'
+        page = dialogflowcx.Page()
+        page.display_name = "EndFlow"
+        page.entry_fulfillment = dialogflowcx.Fulfillment(messages=[dialogflowcx.ResponseMessage(text=dialogflowcx.ResponseMessage.Text(text=[message]))])
     
-    def delete_all_pages(self):
-        """Delete all pages associated to the flow."""
-        pages = self.client.list_pages(parent=self.parent_flow)
-        for page in pages:
-            self.remove_references_to_page(page.name)
-            self.delete_page(page_name=page.name)
+        if not existing_page:
+            # Si la página no existe, crearla
+            return self.client.create_page(page=page, parent=parent_flow)
+        else:
+            # Si la página ya existe, actualizarla
+            page.name = existing_page.name
+            return self.update_page(page=existing_page, new_page=page)
 
-   
 class TransitionRouteManager:
     
     def __init__(self, dialogflow_factory, flow_client, parent_flow, pages_manager):
