@@ -100,6 +100,7 @@ class DialogflowServiceCX:
 
             for sub_page in pages:
                 if sub_page['parent'] == None:
+                    sub_page['entityValues']
                     sub_page['parent'] = sub_page['display_name']
                     start_page = self.create_page(page_dict=pages[0], dialogflow_flow_parent_name=new_flow_object.name, is_start_page=True)
                     self.transition_route_manager.add_transition_route_to_new_flow(intent_name=sub_page['parent_intent'], target_flow_name=new_flow_object.name)
